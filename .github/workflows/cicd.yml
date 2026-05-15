@@ -4,111 +4,135 @@ on:
   push:
     branches: [ "master" ]
 
+
 jobs:
+
+# ---------------- BUILD ----------------
   compile:
     runs-on: self-hosted
     steps:
     - uses: actions/checkout@v4
+
     - name: Set up JDK 17
       uses: actions/setup-java@v4
       with:
         java-version: '17'
         distribution: 'temurin'
         cache: maven
-    - name: Build with Maven
+
+    - name: Compile Project
       run: mvn compile
 
+
+# ---------------- SECURITY ----------------
   security-check:
     runs-on: self-hosted
     needs: compile
+
     steps:
     - uses: actions/checkout@v4
-    - name: Trivy Installation
+
+    - name: Install Trivy
       run: |
+        sudo apt-get update
         sudo apt-get install -y wget apt-transport-https gnupg lsb-release
         wget -qO - https://aquasecurity.github.io/trivy-repo/deb/public.key | gpg --dearmor | sudo tee /usr/share/keyrings/trivy.gpg > /dev/null
         echo "deb [signed-by=/usr/share/keyrings/trivy.gpg] https://aquasecurity.github.io/trivy-repo/deb $(lsb_release -sc) main" | sudo tee /etc/apt/sources.list.d/trivy.list
         sudo apt-get update -y
         sudo apt-get install -y trivy
-    - name: Trivy FS Scan
-      run: trivy fs --format table -o fs-report.json .
-    - name: Gitleaks Installation
-      run: sudo apt install gitleaks -y
-    - name: Gitleaks Code Scan
-      run: gitleaks detect source . -r gitleaks-report.json -f json
 
+    - name: Trivy Scan
+      run: trivy fs --format table -o trivy-report.json .
+
+    - name: Install Gitleaks
+      run: sudo apt-get install -y gitleaks
+
+    - name: Gitleaks Scan
+      run: gitleaks detect . -r gitleaks-report.json -f json
+
+
+# ---------------- TEST ----------------
   test:
     runs-on: self-hosted
     needs: security-check
+
     steps:
     - uses: actions/checkout@v4
+
     - name: Set up JDK 17
       uses: actions/setup-java@v4
       with:
         java-version: '17'
         distribution: 'temurin'
         cache: maven
-    - name: Unit Test Cases
+
+    - name: Run Tests
       run: mvn test
 
-  build_project_and_sonar_scan:
+
+# ---------------- BUILD + SONAR ----------------
+  build_and_sonar:
     runs-on: self-hosted
     needs: test
+
     steps:
     - uses: actions/checkout@v4
       with:
         fetch-depth: 0
+
     - name: Set up JDK 17
       uses: actions/setup-java@v4
       with:
         java-version: '17'
         distribution: 'temurin'
         cache: maven
-    - name: Install unzip
-      run: sudo apt-get update && sudo apt-get install -y unzip
-    - name: Build Project
+
+    - name: Build Package
       run: mvn package
-    - name: Upload JAR artifact
+
+    - name: Upload Artifact
       uses: actions/upload-artifact@v4
       with:
         name: app-jar
         path: target/*.jar
+
     - name: SonarQube Scan
       uses: SonarSource/sonarqube-scan-action@v5.0.0
       env:
         SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
         SONAR_HOST_URL: ${{ vars.SONAR_HOST_URL }}
-    - name: SonarQube Quality Gate check
-      id: sonarqube-quality-gate-check
+
+    - name: Quality Gate
       uses: sonarsource/sonarqube-quality-gate-action@master
-      with:
-        pollingTimeoutSec: 600
       env:
         SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
         SONAR_HOST_URL: ${{ vars.SONAR_HOST_URL }}
 
-  buils_docker_image_and_push:
+
+# ---------------- DOCKER BUILD ----------------
+  docker_build_push:
     runs-on: self-hosted
-    needs: build_project_and_sonar_scan
+    needs: build_and_sonar
+
     steps:
     - uses: actions/checkout@v4
-    - name: Fix Docker socket permission
+
+    - name: Fix Docker permission
       run: sudo chmod 666 /var/run/docker.sock
-    - name: Download JAR artifact
+
+    - name: Download Artifact
       uses: actions/download-artifact@v4
       with:
         name: app-jar
         path: app
-    - name: Login to Docker Hub
+
+    - name: Login DockerHub
       uses: docker/login-action@v3
       with:
         username: ${{ vars.DOCKERHUB_USERNAME }}
         password: ${{ secrets.DOCKERHUB_TOKEN }}
-    - name: Set up QEMU
-      uses: docker/setup-qemu-action@v3
-    - name: Set up Docker Buildx
-      uses: docker/setup-buildx-action@v3
-    - name: Build and Push Docker image
+
+    - name: Build & Push Image
       uses: docker/build-push-action@v6
       with:
         context: .
@@ -116,78 +140,28 @@ jobs:
         tags: simbudevops7497/bankapp:latest
         file: ./Dockerfile
 
-  create_eks_cluster:
-    runs-on: self-hosted
-    needs: buils_docker_image_and_push
-    steps:
-    - name: Install eksctl
-      run: |
-        if ! command -v eksctl &> /dev/null; then
-          curl --silent --location "https://github.com/weaveworks/eksctl/releases/latest/download/eksctl_Linux_amd64.tar.gz" | tar xz -C /tmp
-          sudo mv /tmp/eksctl /usr/local/bin
-        else
-          echo "eksctl already installed: $(eksctl version)"
-        fi
-    - name: Configure AWS credentials
-      uses: aws-actions/configure-aws-credentials@v4
-      with:
-        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-        aws-region: ap-south-1
-    - name: Check if EKS cluster exists
-      id: check_cluster
-      run: |
-        if aws eks describe-cluster --name bankapp-cluster --region ap-south-1 2>/dev/null; then
-          echo "cluster_exists=true" >> $GITHUB_OUTPUT
-        else
-          echo "cluster_exists=false" >> $GITHUB_OUTPUT
-        fi
-    - name: Create EKS Cluster
-      if: steps.check_cluster.outputs.cluster_exists == 'false'
-      run: |
-        eksctl create cluster \
-          --name bankapp-cluster \
-          --region ap-south-1 \
-          --nodegroup-name bankapp-nodes \
-          --node-type t3.medium \
-          --nodes 1 \
-          --managed
-        echo "Cluster created successfully!"
-    - name: Skip if cluster exists
-      if: steps.check_cluster.outputs.cluster_exists == 'true'
-      run: echo "Cluster already exists, skipping creation!"
 
-  deploy_to_kubernetes:
+# ---------------- KUBERNETES DEPLOY (kubeadm) ----------------
+  deploy_to_k8s:
     runs-on: self-hosted
-    needs: create_eks_cluster
+    needs: docker_build_push
+
     steps:
-    - name: Checkout Code
-      uses: actions/checkout@v4
-    - name: Install AWS CLI
+    - uses: actions/checkout@v4
+
+    - name: Setup kubeconfig
       run: |
-        if ! command -v aws &> /dev/null; then
-          curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
-          unzip awscliv2.zip
-          sudo ./aws/install
-        else
-          echo "AWS CLI already installed: $(aws --version)"
-        fi
-    - name: Configure AWS credentials
-      uses: aws-actions/configure-aws-credentials@v4
-      with:
-        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-        aws-region: ap-south-1
-    - name: Set up kubectl
-      uses: azure/setup-kubectl@v3
-      with:
-        version: latest
-    - name: Configure kubeconfig for EKS
-      run: |
-        aws eks update-kubeconfig \
-          --region ap-south-1 \
-          --name bankapp-cluster
-    - name: Verify cluster connection
-      run: kubectl cluster-info
-    - name: Deploy to EKS
+        mkdir -p ~/.kube
+        echo "${{ secrets.KUBECONFIG_DATA }}" > ~/.kube/config
+        chmod 600 ~/.kube/config
+
+    - name: Verify Cluster Access
+      run: kubectl get nodes
+
+    - name: Deploy App
       run: kubectl apply -f ds.yml
+
+    - name: Verify Deployment
+      run: |
+        kubectl get pods
+        kubectl get svc
