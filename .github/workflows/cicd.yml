@@ -41,7 +41,7 @@ jobs:
         sudo apt-get update -y
         sudo apt-get install -y trivy
 
-    - name: Trivy FS Scan
+    - name: Trivy Scan
       run: trivy fs --format table -o trivy-report.json .
 
     - name: Install Gitleaks
@@ -141,24 +141,62 @@ jobs:
         file: ./Dockerfile
 
 
-# ---------------- KUBERNETES DEPLOY (kubeadm cluster via self-hosted runner) ----------------
+# ---------------- KUBERNETES DEPLOY (INLINE - NO YAML FILE) ----------------
   deploy_to_k8s:
-    runs-on: k8s-deploy   # 👈 YOUR K8S MACHINE RUNNER LABEL
+    runs-on: k8s-deploy
     needs: docker_build_push
 
     steps:
-    - uses: actions/checkout@v4
+    - name: Verify cluster access
+      run: kubectl get nodes
 
-    - name: Check Kubernetes access
-      run: sudo kubectl get nodes
-
-    - name: Deploy application
-      run: sudo kubectl apply -f ds.yml
-
-    - name: Verify deployment
+    # ---------------- CREATE DEPLOYMENT ----------------
+    - name: Create Kubernetes Deployment
       run: |
-        sudo kubectl get pods
-        sudo kubectl get svc
+        kubectl apply -f - <<EOF
+        apiVersion: apps/v1
+        kind: Deployment
+        metadata:
+          name: bankapp
+        spec:
+          replicas: 2
+          selector:
+            matchLabels:
+              app: bankapp
+          template:
+            metadata:
+              labels:
+                app: bankapp
+            spec:
+              containers:
+              - name: bankapp
+                image: simbudevops7497/bankapp:latest
+                imagePullPolicy: Always
+                ports:
+                - containerPort: 8080
+        EOF
 
-    - name: Rollout status check
-      run: sudo kubectl rollout status deployment --all
+    # ---------------- CREATE SERVICE ----------------
+    - name: Create Kubernetes Service
+      run: |
+        kubectl apply -f - <<EOF
+        apiVersion: v1
+        kind: Service
+        metadata:
+          name: bankapp-service
+        spec:
+          type: NodePort
+          selector:
+            app: bankapp
+          ports:
+            - port: 80
+              targetPort: 8080
+              nodePort: 30080
+        EOF
+
+    # ---------------- VERIFY ----------------
+    - name: Verify Deployment
+      run: |
+        kubectl get pods
+        kubectl get svc
+        kubectl rollout status deployment bankapp
