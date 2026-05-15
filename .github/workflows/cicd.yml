@@ -141,19 +141,19 @@ jobs:
         file: ./Dockerfile
 
 
-# ---------------- KUBERNETES DEPLOY (INLINE - NO YAML FILE) ----------------
+# ---------------- KUBERNETES DEPLOY (kubeadm + sudo kubectl) ----------------
   deploy_to_k8s:
     runs-on: k8s-deploy
     needs: docker_build_push
 
     steps:
     - name: Verify cluster access
-      run: kubectl get nodes
+      run: sudo kubectl get nodes
 
-    # ---------------- CREATE DEPLOYMENT ----------------
-    - name: Create Kubernetes Deployment
+    # ---------------- DEPLOY APP ----------------
+    - name: Deploy Application
       run: |
-        kubectl apply -f - <<EOF
+        sudo kubectl apply -f - <<EOF
         apiVersion: apps/v1
         kind: Deployment
         metadata:
@@ -176,10 +176,10 @@ jobs:
                 - containerPort: 8080
         EOF
 
-    # ---------------- CREATE SERVICE ----------------
-    - name: Create Kubernetes Service
+    # ---------------- SERVICE ----------------
+    - name: Create Service
       run: |
-        kubectl apply -f - <<EOF
+        sudo kubectl apply -f - <<EOF
         apiVersion: v1
         kind: Service
         metadata:
@@ -197,6 +197,6 @@ jobs:
     # ---------------- VERIFY ----------------
     - name: Verify Deployment
       run: |
-        kubectl get pods
-        kubectl get svc
-        kubectl rollout status deployment bankapp
+        sudo kubectl get pods
+        sudo kubectl get svc
+        sudo kubectl rollout status deployment bankapp
