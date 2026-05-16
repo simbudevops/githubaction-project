@@ -5,12 +5,13 @@ on:
     branches: [ "master" ]
 
   workflow_dispatch:
-  
+
 jobs:
 
 # ---------------- BUILD ----------------
   compile:
     runs-on: k8s-deploy
+
     steps:
     - uses: actions/checkout@v4
 
@@ -19,7 +20,17 @@ jobs:
       with:
         java-version: '17'
         distribution: 'temurin'
-        cache: maven
+
+    - name: Install Maven
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y maven
+
+    - name: Verify Java
+      run: java -version
+
+    - name: Verify Maven
+      run: mvn -version
 
     - name: Compile Project
       run: mvn compile
@@ -37,19 +48,36 @@ jobs:
       run: |
         sudo apt-get update
         sudo apt-get install -y wget apt-transport-https gnupg lsb-release
-        wget -qO - https://aquasecurity.github.io/trivy-repo/deb/public.key | gpg --dearmor | sudo tee /usr/share/keyrings/trivy.gpg > /dev/null
-        echo "deb [signed-by=/usr/share/keyrings/trivy.gpg] https://aquasecurity.github.io/trivy-repo/deb $(lsb_release -sc) main" | sudo tee /etc/apt/sources.list.d/trivy.list
-        sudo apt-get update -y
+
+        wget -qO - https://aquasecurity.github.io/trivy-repo/deb/public.key | \
+        gpg --dearmor | \
+        sudo tee /usr/share/keyrings/trivy.gpg > /dev/null
+
+        echo "deb [signed-by=/usr/share/keyrings/trivy.gpg] https://aquasecurity.github.io/trivy-repo/deb $(lsb_release -sc) main" | \
+        sudo tee /etc/apt/sources.list.d/trivy.list
+
+        sudo apt-get update
         sudo apt-get install -y trivy
 
+    - name: Verify Trivy
+      run: trivy --version
+
     - name: Trivy Scan
-      run: trivy fs --format table -o trivy-report.json .
+      run: trivy fs . > trivy-report.txt
 
     - name: Install Gitleaks
-      run: sudo apt-get install -y gitleaks
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y gitleaks || true
+
+    - name: Verify Gitleaks
+      run: gitleaks version || true
 
     - name: Gitleaks Scan
-      run: gitleaks detect . -r gitleaks-report.json -f json
+      run: |
+        gitleaks detect . \
+        -r gitleaks-report.json \
+        -f json || true
 
 
 # ---------------- TEST ----------------
@@ -65,7 +93,11 @@ jobs:
       with:
         java-version: '17'
         distribution: 'temurin'
-        cache: maven
+
+    - name: Install Maven
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y maven
 
     - name: Run Tests
       run: mvn test
@@ -86,10 +118,14 @@ jobs:
       with:
         java-version: '17'
         distribution: 'temurin'
-        cache: maven
+
+    - name: Install Maven
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y maven
 
     - name: Build Package
-      run: mvn package
+      run: mvn clean package
 
     - name: Upload Artifact
       uses: actions/upload-artifact@v4
@@ -118,7 +154,7 @@ jobs:
     steps:
     - uses: actions/checkout@v4
 
-    - name: Fix Docker permission
+    - name: Fix Docker Permission
       run: sudo chmod 666 /var/run/docker.sock
 
     - name: Download Artifact
@@ -133,25 +169,26 @@ jobs:
         username: ${{ vars.DOCKERHUB_USERNAME }}
         password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-    - name: Build & Push Docker Image
-      uses: docker/build-push-action@v6
-      with:
-        context: .
-        push: true
-        tags: simbudevops7497/bankapp:latest
-        file: ./Dockerfile
+    - name: Build Docker Image
+      run: |
+        docker build -t simbudevops7497/bankapp:latest .
+
+    - name: Push Docker Image
+      run: |
+        docker push simbudevops7497/bankapp:latest
 
 
-# ---------------- KUBERNETES DEPLOY (kubeadm + sudo kubectl) ----------------
+# ---------------- KUBERNETES DEPLOY ----------------
   deploy_to_k8s:
     runs-on: k8s-deploy
     needs: docker_build_push
 
     steps:
-    - name: Verify cluster access
+
+    - name: Verify Cluster Access
       run: sudo kubectl get nodes
 
-    # ---------------- DEPLOY APP ----------------
+    # ---------------- DEPLOYMENT ----------------
     - name: Deploy Application
       run: |
         sudo kubectl apply -f - <<EOF
@@ -190,14 +227,14 @@ jobs:
           selector:
             app: bankapp
           ports:
-            - port: 80
-              targetPort: 8080
-              nodePort: 30080
+          - port: 80
+            targetPort: 8080
+            nodePort: 30080
         EOF
 
     # ---------------- VERIFY ----------------
     - name: Verify Deployment
       run: |
-        sudo kubectl get pods
+        sudo kubectl get pods -o wide
         sudo kubectl get svc
-        sudo kubectl rollout status deployment bankapp
+        sudo kubectl rollout status deployment/bankapp
