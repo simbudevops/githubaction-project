@@ -21,11 +21,6 @@ jobs:
         java-version: '17'
         distribution: 'temurin'
 
-    - name: Install Maven
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y maven
-
     - name: Verify Java
       run: java -version
 
@@ -44,31 +39,11 @@ jobs:
     steps:
     - uses: actions/checkout@v4
 
-    - name: Install Trivy
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y wget apt-transport-https gnupg lsb-release
-
-        wget -qO - https://aquasecurity.github.io/trivy-repo/deb/public.key | \
-        gpg --dearmor | \
-        sudo tee /usr/share/keyrings/trivy.gpg > /dev/null
-
-        echo "deb [signed-by=/usr/share/keyrings/trivy.gpg] https://aquasecurity.github.io/trivy-repo/deb $(lsb_release -sc) main" | \
-        sudo tee /etc/apt/sources.list.d/trivy.list
-
-        sudo apt-get update
-        sudo apt-get install -y trivy
-
     - name: Verify Trivy
       run: trivy --version
 
     - name: Trivy Scan
       run: trivy fs . > trivy-report.txt
-
-    - name: Install Gitleaks
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y gitleaks || true
 
     - name: Verify Gitleaks
       run: gitleaks version || true
@@ -94,11 +69,6 @@ jobs:
         java-version: '17'
         distribution: 'temurin'
 
-    - name: Install Maven
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y maven
-
     - name: Run Tests
       run: mvn test
 
@@ -118,11 +88,6 @@ jobs:
       with:
         java-version: '17'
         distribution: 'temurin'
-
-    - name: Install Maven
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y maven
 
     - name: Build Package
       run: mvn clean package
@@ -186,12 +151,12 @@ jobs:
     steps:
 
     - name: Verify Cluster Access
-      run: sudo kubectl get nodes
+      run: kubectl get nodes
 
     # ---------------- DEPLOYMENT ----------------
     - name: Deploy Application
       run: |
-        sudo kubectl apply -f - <<EOF
+        kubectl apply -f - <<EOF
         apiVersion: apps/v1
         kind: Deployment
         metadata:
@@ -217,7 +182,7 @@ jobs:
     # ---------------- SERVICE ----------------
     - name: Create Service
       run: |
-        sudo kubectl apply -f - <<EOF
+        kubectl apply -f - <<EOF
         apiVersion: v1
         kind: Service
         metadata:
@@ -235,6 +200,6 @@ jobs:
     # ---------------- VERIFY ----------------
     - name: Verify Deployment
       run: |
-        sudo kubectl get pods -o wide
-        sudo kubectl get svc
-        sudo kubectl rollout status deployment/bankapp
+        kubectl get pods -o wide
+        kubectl get svc
+        kubectl rollout status deployment/bankapp
