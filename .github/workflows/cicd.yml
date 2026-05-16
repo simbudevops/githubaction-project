@@ -10,7 +10,7 @@ jobs:
 
 # ---------------- BUILD ----------------
   compile:
-    runs-on: self-hosted
+    runs-on: build-runner
     steps:
     - uses: actions/checkout@v4
 
@@ -27,7 +27,7 @@ jobs:
 
 # ---------------- SECURITY ----------------
   security-check:
-    runs-on: self-hosted
+    runs-on: build-runner
     needs: compile
 
     steps:
@@ -54,7 +54,7 @@ jobs:
 
 # ---------------- TEST ----------------
   test:
-    runs-on: self-hosted
+    runs-on: build-runner
     needs: security-check
 
     steps:
@@ -73,7 +73,7 @@ jobs:
 
 # ---------------- BUILD + SONAR ----------------
   build_and_sonar:
-    runs-on: self-hosted
+    runs-on: build-runner
     needs: test
 
     steps:
@@ -112,7 +112,7 @@ jobs:
 
 # ---------------- DOCKER BUILD ----------------
   docker_build_push:
-    runs-on: self-hosted
+    runs-on: build-runner
     needs: build_and_sonar
 
     steps:
